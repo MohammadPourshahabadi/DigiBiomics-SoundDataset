@@ -34,9 +34,27 @@ from sklearn.preprocessing import label_binarize
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ------------------- PATHS ------------------- #
-DATASET_ROOT = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
-OUTDIR = os.path.join("runs", "icbhi_scratch_aug_oversample")
+# ------------------- PATHS ------------------- #
+from google.colab import drive
+drive.mount('/content/drive')
+
+# Base folder (top-level dataset location)
+BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
+
+# --- Auto-detect subfolder that contains .wav files ---
+import glob
+candidates = glob.glob(os.path.join(BASE_PATH, "**/*.wav"), recursive=True)
+if len(candidates) == 0:
+    raise FileNotFoundError(f"No .wav files found under {BASE_PATH}. Check your Google Drive path.")
+else:
+    # Root folder is the common parent of .wav files
+    DATASET_ROOT = os.path.commonpath(candidates)
+    print(f"[Auto-detect] Using DATASET_ROOT = {DATASET_ROOT}")
+
+# Output directory for results
+OUTDIR = "/content/drive/MyDrive/Colab Notebooks/Datasets/Results_ICBHI_Scratch"
 os.makedirs(OUTDIR, exist_ok=True)
+
 
 # ------------------- HYPERPARAMS ------------------- #
 SEED = 1337
@@ -342,5 +360,6 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
