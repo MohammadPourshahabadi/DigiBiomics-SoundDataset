@@ -33,10 +33,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 from torch.utils.data import Dataset, DataLoader, Subset
 
-# ------------------- PATHS ------------------- #
-# ------------------- PATHS ------------------- #
-from google.colab import drive
-drive.mount('/content/drive')
+# ------------------- PATHS ------------------- 
 
 # Base folder (top-level dataset location)
 BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
@@ -360,6 +357,7 @@ def main():
 
 if __name__=="__main__":
     main()
+
 
 
 
