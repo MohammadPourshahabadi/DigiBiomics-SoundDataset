@@ -34,7 +34,7 @@ from sklearn.preprocessing import label_binarize
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ------------------- PATHS ------------------- #
-DATASET_ROOT = r"F:\project digibiomics\second phase of project\dataset\repo\data\ICBHI 2017 Challenge\ICBHI_final_database"
+DATASET_ROOT = r"F:\project digibiomics\second phase of project\dataset\repo\data\ICBHI 2017 Challenge\ICBHI_final_database\ICBHI_final_database"
 OUTDIR = os.path.join("runs", "icbhi_scratch_aug_oversample")
 os.makedirs(OUTDIR, exist_ok=True)
 
@@ -342,3 +342,4 @@ def main():
 
 if __name__=="__main__":
     main()
+
