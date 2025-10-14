@@ -29,7 +29,7 @@ from sklearn.metrics import (
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ------------------- PATHS ------------------- #
-BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database/ICBHI_final_database"
+BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
 
 candidates = glob.glob(os.path.join(BASE_PATH, "**/*.wav"), recursive=True)
 if len(candidates) == 0:
@@ -42,6 +42,21 @@ OUTDIR = "/content/drive/MyDrive/Colab Notebooks/Datasets/Results_ICBHI_Scratch_
 os.makedirs(OUTDIR, exist_ok=True)
 
 # ------------------- HYPERPARAMS ------------------- #
+
+
+import glob, os
+
+test_path = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge"
+print("Sample .wav files found:")
+for f in glob.glob(os.path.join(test_path, "**/*.wav"), recursive=True)[:5]:
+    print("  ", f)
+
+print("Sample .txt files found:")
+for f in glob.glob(os.path.join(test_path, "**/*.txt"), recursive=True)[:5]:
+    print("  ", f)
+
+
+
 SEED = 1337
 EPOCHS = 15
 BATCH_TRAIN = 16
