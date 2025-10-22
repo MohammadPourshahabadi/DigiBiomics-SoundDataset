@@ -398,3 +398,5 @@ def main():
     plt.plot(hist_df["epoch"], hist_df["val_mf1"], label="Val F1", marker="o")
     plt.plot(hist_df["epoch"], hist_df["val_acc"], label="Val Acc", marker="x")
     plt
+if __name__ == "__main__":
+    main()
