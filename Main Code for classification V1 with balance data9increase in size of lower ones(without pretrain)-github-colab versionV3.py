@@ -59,7 +59,7 @@ for f in glob.glob(os.path.join(test_path, "**/*.txt"), recursive=True)[:5]:
 
 
 SEED = 1337
-EPOCHS = 15
+EPOCHS = 2
 BATCH_TRAIN = 16
 BATCH_VAL = 32
 LR = 1.5e-4
