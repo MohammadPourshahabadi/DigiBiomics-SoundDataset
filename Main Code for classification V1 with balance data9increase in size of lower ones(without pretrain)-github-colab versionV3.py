@@ -29,7 +29,7 @@ from sklearn.metrics import (
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ------------------- PATHS ------------------- #
-BASE_PATH = "/content/icbhi_local/ICBHI_final_database"
+BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
 
 
 candidates = glob.glob(os.path.join(BASE_PATH, "**/*.wav"), recursive=True)
