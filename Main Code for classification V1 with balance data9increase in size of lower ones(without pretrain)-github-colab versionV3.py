@@ -5,11 +5,14 @@ Full version with:
 - Balanced dataset via oversampling
 - Light augmentations (gain, noise, shift)
 - Progress bars (tqdm)
-- Early stopping
+- Early stopping (patience=10)
 - Mixed precision (if GPU available)
 - Full metrics (precision, recall, F1, accuracy: micro/macro)
 - Per-class metrics each epoch
-- Plots: F1/Acc curves, confusion matrix, histogram
+- Confusion matrices (overall + one-vs-rest) CSV + PNG
+- ROC curves + AUC (per-class, micro, macro) for best checkpoint
+- Plots: F1/Acc curves
+- Hyperparameters table CSV
 """
 
 import os, glob, random, math
@@ -24,13 +27,13 @@ import seaborn as sns
 from tqdm import tqdm
 from sklearn.metrics import (
     f1_score, accuracy_score, precision_score, recall_score,
-    confusion_matrix, classification_report
+    confusion_matrix, classification_report, roc_curve, auc
 )
+from sklearn.preprocessing import label_binarize
 from torch.utils.data import Dataset, DataLoader, Subset
 
 # ------------------- PATHS ------------------- #
 BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
-
 
 candidates = glob.glob(os.path.join(BASE_PATH, "**/*.wav"), recursive=True)
 if len(candidates) == 0:
@@ -43,30 +46,15 @@ OUTDIR = "/content/drive/MyDrive/Colab Notebooks/Datasets/Results_ICBHI_Scratch_
 os.makedirs(OUTDIR, exist_ok=True)
 
 # ------------------- HYPERPARAMS ------------------- #
-
-
-import glob, os
-
-test_path = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge"
-print("Sample .wav files found:")
-for f in glob.glob(os.path.join(test_path, "**/*.wav"), recursive=True)[:5]:
-    print("  ", f)
-
-print("Sample .txt files found:")
-for f in glob.glob(os.path.join(test_path, "**/*.txt"), recursive=True)[:5]:
-    print("  ", f)
-
-
-
 SEED = 1337
-EPOCHS = 45
+EPOCHS = 30
 BATCH_TRAIN = 16
 BATCH_VAL = 32
 LR = 1.5e-4
 WEIGHT_DECAY = 1e-3
 TARGET_SEC = 2.5
 BALANCE_DATA = True
-PATIENCE = 5  # early stopping
+PATIENCE = 10  # early stopping changed to 10
 
 SR = 16000
 WIN = int(0.025 * SR)
@@ -75,6 +63,16 @@ N_MELS = 40
 FMIN = 20
 FMAX = 8000
 LABELS = ["normal", "crackle", "wheeze", "both"]
+N_CLASSES = len(LABELS)
+
+# For quick sanity print
+test_path = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge"
+print("Sample .wav files found:")
+for f in glob.glob(os.path.join(test_path, "**/*.wav"), recursive=True)[:5]:
+    print("  ", f)
+print("Sample .txt files found:")
+for f in glob.glob(os.path.join(test_path, "**/*.txt"), recursive=True)[:5]:
+    print("  ", f)
 
 # ------------------- UTILS ------------------- #
 def set_seed(seed=1337):
@@ -285,11 +283,135 @@ def oversample_with_replacement(base_train, train_idx, out_csv):
     print(f"[Oversample] Counts={counts} -> expanded {len(expanded)} samples")
     return expanded
 
+# ------------------- SAVE HELPERS ------------------- #
+def save_hyperparams(outdir):
+    HYPERPARAMS = {
+        "SEED": SEED,
+        "EPOCHS": EPOCHS,
+        "BATCH_TRAIN": BATCH_TRAIN,
+        "BATCH_VAL": BATCH_VAL,
+        "LR": LR,
+        "WEIGHT_DECAY": WEIGHT_DECAY,
+        "TARGET_SEC": TARGET_SEC,
+        "BALANCE_DATA": BALANCE_DATA,
+        "PATIENCE": PATIENCE,
+        "SR": SR,
+        "WIN": WIN,
+        "HOP": HOP,
+        "N_MELS": N_MELS,
+        "FMIN": FMIN,
+        "FMAX": FMAX,
+        "LABELS": ",".join(LABELS)
+    }
+    df = pd.DataFrame({"hyperparameter": list(HYPERPARAMS.keys()),
+                       "value": list(HYPERPARAMS.values())})
+    df.to_csv(os.path.join(outdir, "hyperparameters.csv"), index=False)
+    return df
+
+def save_confusions(y_true, y_pred, labels, outdir, prefix):
+    """
+    Saves:
+      - overall multiclass confusion matrix: CSV + PNG
+      - per-class (one-vs-rest) confusion matrices: CSV + PNG for each class
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    # Overall (multiclass) confusion
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(labels))))
+    df_cm = pd.DataFrame(cm, index=labels, columns=labels)
+    df_cm.to_csv(os.path.join(outdir, f"{prefix}_confusion_matrix.csv"))
+
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(df_cm, annot=True, fmt="d", cmap="Blues")
+    plt.ylabel("Actual")
+    plt.xlabel("Predicted")
+    plt.title(f"Confusion Matrix ({prefix})")
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, f"{prefix}_confusion_matrix.png"), dpi=150)
+    plt.close()
+
+    # Per-class one-vs-rest
+    for i, name in enumerate(labels):
+        yt_bin = (y_true == i).astype(int)
+        yp_bin = (y_pred == i).astype(int)
+        cm_i = confusion_matrix(yt_bin, yp_bin, labels=[0, 1])
+
+        idx_names = [f"Actual not {name}", f"Actual {name}"]
+        col_names = [f"Pred not {name}", f"Pred {name}"]
+        df_i = pd.DataFrame(cm_i, index=idx_names, columns=col_names)
+        df_i.to_csv(os.path.join(outdir, f"{prefix}_confusion_{name}_onevsrest.csv"))
+
+        plt.figure(figsize=(4.2, 3.6))
+        sns.heatmap(df_i, annot=True, fmt="d", cmap="Purples")
+        plt.title(f"{name}: One-vs-Rest ({prefix})")
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, f"{prefix}_confusion_{name}_onevsrest.png"), dpi=150)
+        plt.close()
+
+def save_multiclass_roc(y_true, y_prob, labels, outdir, prefix):
+    """
+    Save ROC curves (per-class, micro, macro) and AUCs.
+    y_true: list/array of integer class ids
+    y_prob: array shape [N, C] of predicted probabilities
+    """
+    y_true = np.asarray(y_true)
+    y_prob = np.asarray(y_prob)
+    assert y_prob.ndim == 2 and y_prob.shape[1] == len(labels), "y_prob must be [N, C]"
+
+    # binarize
+    Y_true = label_binarize(y_true, classes=list(range(len(labels))))  # shape [N, C]
+    fpr = dict(); tpr = dict(); roc_auc = dict()
+
+    # per-class
+    for i, name in enumerate(labels):
+        fpr[i], tpr[i], _ = roc_curve(Y_true[:, i], y_prob[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    # micro-average
+    fpr["micro"], tpr["micro"], _ = roc_curve(Y_true.ravel(), y_prob.ravel())
+    roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+
+    # macro-average
+    # aggregate all FPRs
+    all_fpr = np.unique(np.concatenate([fpr[i] for i in range(len(labels))]))
+    mean_tpr = np.zeros_like(all_fpr)
+    for i in range(len(labels)):
+        mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+    mean_tpr /= len(labels)
+    fpr["macro"] = all_fpr
+    tpr["macro"] = mean_tpr
+    roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
+
+    # Save AUCs table
+    auc_rows = [{"class": labels[i], "AUC": roc_auc[i]} for i in range(len(labels))]
+    auc_rows += [{"class": "micro", "AUC": roc_auc["micro"]},
+                 {"class": "macro", "AUC": roc_auc["macro"]}]
+    pd.DataFrame(auc_rows).to_csv(os.path.join(outdir, f"{prefix}_auc.csv"), index=False)
+
+    # Plot curves
+    plt.figure(figsize=(7,6))
+    for i, name in enumerate(labels):
+        plt.plot(fpr[i], tpr[i], lw=1.6, label=f"{name} (AUC={roc_auc[i]:.3f})")
+    plt.plot(fpr["micro"], tpr["micro"], lw=2.0, linestyle="--", label=f"micro (AUC={roc_auc['micro']:.3f})")
+    plt.plot(fpr["macro"], tpr["macro"], lw=2.0, linestyle="-.", label=f"macro (AUC={roc_auc['macro']:.3f})")
+    plt.plot([0,1], [0,1], "k:", lw=1)
+    plt.xlim([0.0, 1.0]); plt.ylim([0.0, 1.05])
+    plt.xlabel("False Positive Rate"); plt.ylabel("True Positive Rate")
+    plt.title(f"ROC Curves ({prefix})")
+    plt.legend(loc="lower right", fontsize=9)
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, f"{prefix}_roc.png"), dpi=160)
+    plt.close()
+
 # ------------------- MAIN ------------------- #
 def main():
     set_seed(SEED)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("[Main] Using device:", device)
+
+    # Save hyperparameters table now
+    df_hparams = save_hyperparams(OUTDIR)
 
     base = ICBHICycleDataset(DATASET_ROOT, TARGET_SEC, random_crop=True, augment=False)
     n_total = len(base)
@@ -307,7 +429,7 @@ def main():
     train_dl = DataLoader(train_ds, batch_size=BATCH_TRAIN, shuffle=True, collate_fn=collate_fn)
     val_dl = DataLoader(val_ds, batch_size=BATCH_VAL, shuffle=False, collate_fn=collate_fn)
 
-    model = ICBHIClassifier(len(LABELS)).to(device)
+    model = ICBHIClassifier(N_CLASSES).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     crit = nn.CrossEntropyLoss()
     scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
@@ -351,7 +473,7 @@ def main():
                 yp_val.extend(out.argmax(1).cpu().numpy())
                 yt_val.extend(y.cpu().numpy())
 
-        yprob_val = np.vstack(yprob_val) if len(yprob_val) > 0 else np.zeros((0, len(LABELS)))
+        yprob_val = np.vstack(yprob_val) if len(yprob_val) > 0 else np.zeros((0, N_CLASSES))
 
         # ---- Compute metrics ----
         va_acc = accuracy_score(yt_val, yp_val)
@@ -389,7 +511,7 @@ def main():
                 print(f"No improvement for {PATIENCE} epochs → early stop.")
                 break
 
-    # ---- Save & Plot ----
+    # ---- Save & Plot learning curves ----
     hist_df = pd.DataFrame(history)
     hist_df.to_csv(os.path.join(OUTDIR, "metrics_per_epoch.csv"), index=False)
 
@@ -397,6 +519,38 @@ def main():
     plt.plot(hist_df["epoch"], hist_df["train_mf1"], label="Train F1", marker="o")
     plt.plot(hist_df["epoch"], hist_df["val_mf1"], label="Val F1", marker="o")
     plt.plot(hist_df["epoch"], hist_df["val_acc"], label="Val Acc", marker="x")
-    plt
+    plt.xlabel("Epoch"); plt.ylabel("Score")
+    plt.legend(); plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTDIR, "learning_curves.png"), dpi=150)
+    plt.close()
+
+    # ---- Confusion matrices + ROC/AUC at best checkpoint (on val set) ----
+    best_path = os.path.join(OUTDIR, "best.ckpt")
+    if os.path.isfile(best_path):
+        best_model = ICBHIClassifier(N_CLASSES).to(device)
+        best_model.load_state_dict(torch.load(best_path, map_location=device))
+        best_model.eval()
+
+        yt_best, yp_best, yprob_best = [], [], []
+        with torch.no_grad():
+            for X, y in tqdm(val_dl, desc="Best model eval (val set)"):
+                if X is None: continue
+                X = X.to(device)
+                out = best_model(X)
+                yp_best.extend(out.argmax(1).cpu().numpy())
+                yprob_best.append(torch.softmax(out, dim=1).cpu().numpy())
+                yt_best.extend(y.numpy())
+        yprob_best = np.vstack(yprob_best)
+
+        # Confusion matrices
+        save_confusions(yt_best, yp_best, LABELS, OUTDIR, prefix="best_val")
+
+        # ROC + AUC
+        try:
+            save_multiclass_roc(yt_best, yprob_best, LABELS, OUTDIR, prefix="best_val")
+        except Exception as e:
+            print("[Warn] ROC/AUC computation failed:", e)
+
 if __name__ == "__main__":
     main()
