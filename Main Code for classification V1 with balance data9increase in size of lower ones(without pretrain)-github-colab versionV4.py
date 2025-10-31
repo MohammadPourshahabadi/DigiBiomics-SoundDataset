@@ -49,7 +49,7 @@ os.makedirs(OUTDIR, exist_ok=True)
 
 # ------------------- HYPERPARAMS ------------------- #
 SEED = 1337
-EPOCHS = 3
+EPOCHS = 10
 BATCH_TRAIN = 16
 BATCH_VAL = 32
 LR = 1.5e-4
