@@ -52,13 +52,13 @@ os.makedirs(OUTDIR, exist_ok=True)
 
 # ------------------- HYPERPARAMS ------------------- #
 SEED = 1337
-EPOCHS = 10
+EPOCHS = 30
 BATCH_TRAIN = 16
 BATCH_VAL = 32
 LR = 1.5e-4
 WEIGHT_DECAY = 1e-3
 TARGET_SEC = 2.5
-PATIENCE = 8                   # early stopping patience (stricter)
+PATIENCE = 15                   # early stopping patience (stricter)
 USE_CLASS_WEIGHTS = True       # use class-weighted loss (no hard oversampling)
 
 SR = 16000
