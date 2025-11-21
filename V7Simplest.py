@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Simplest CRNN (CNN + LSTM) baseline for ICBHI cycles:
+Simplest CRNN baseline for ICBHI cycles:
 
 - Load all cycles from .txt annotations
 - Patient-wise split: 70% train, 15% val, 15% test (by subject ID from filename)
@@ -11,14 +11,19 @@ Simplest CRNN (CNN + LSTM) baseline for ICBHI cycles:
     * number of trainable parameters
     * train/val/test Accuracy per epoch
     * train/val/test micro-F1 per epoch
-- Plot:
-    * Accuracy curves
-    * micro-F1 curves
-    * Confusion matrix (test)
-    * ROC curves + AUC (per-class, micro, macro)
+- Save:
+    * metrics_per_epoch.csv
+    * model_info.txt
+    * accuracy_curves.png
+    * micro_f1_curves.png
+    * confusion_matrix_test.png + confusion_matrix_test.csv
+    * roc_test.png + roc_test_auc.csv
 """
 
-import os, glob, random, math
+import os
+import glob
+import random
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,11 +40,20 @@ from sklearn.metrics import (
 from sklearn.preprocessing import label_binarize
 
 import matplotlib.pyplot as plt
+import pandas as pd
+
+import soundfile as sf
+import librosa
 
 # ---------------------------------------------------------------------#
-# CONFIG
+# PATHS & CONFIG
 # ---------------------------------------------------------------------#
 BASE_PATH = "/content/drive/MyDrive/Colab Notebooks/Datasets/ICBHI 2017 Challenge/ICBHI_final_database"
+
+RESULT_ROOT = "/content/drive/MyDrive/Colab Notebooks/Datasets"
+RESULT_DIR = os.path.join(RESULT_ROOT, "Resultfornewmodel")
+os.makedirs(RESULT_DIR, exist_ok=True)
+print("Saving results to:", RESULT_DIR)
 
 SR = 16000
 TARGET_SEC = 2.5
@@ -83,6 +97,23 @@ def cycle_label(c, w):
     if c == 0 and w == 1:
         return 2  # wheeze
     return 3      # both
+
+
+def load_wav_safe(path, target_sr=16000):
+    """Load audio as mono float32 tensor and resample to target_sr."""
+    try:
+        data, sr = sf.read(path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+    except Exception:
+        data, sr = librosa.load(path, sr=None, mono=True)
+
+    wav = torch.tensor(data, dtype=torch.float32).unsqueeze(0)  # (1, N)
+
+    if sr != target_sr:
+        wav = torchaudio.functional.resample(wav, sr, target_sr)
+
+    return wav, target_sr
 
 
 # ---------------------------------------------------------------------#
@@ -151,11 +182,8 @@ class ICBHICycleDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.items[idx]
-        wav, sr = torchaudio.load(item.wav_path)
-        if wav.shape[0] > 1:
-            wav = wav.mean(0, keepdim=True)
-        if sr != self.sr:
-            wav = torchaudio.functional.resample(wav, sr, self.sr)
+
+        wav, sr = load_wav_safe(item.wav_path, self.sr)
 
         start = int(item.start_s * self.sr)
         end = int(item.end_s * self.sr)
@@ -218,6 +246,16 @@ def subset_stats(dataset, indices, name):
     print(f"  #patients: {len(unique_pids)}")
     for k, lab in enumerate(LABELS):
         print(f"  {lab:7s}: {counts[k]}")
+
+    # Save stats also to CSV
+    df = pd.DataFrame({
+        "split": [name],
+        "n_cycles": [len(indices)],
+        "n_patients": [len(unique_pids)],
+        **{f"n_{LABELS[k]}": [counts[k]] for k in range(N_CLASSES)},
+    })
+    stats_path = os.path.join(RESULT_DIR, f"{name.lower()}_stats.csv")
+    df.to_csv(stats_path, index=False)
 
 
 # ---------------------------------------------------------------------#
@@ -322,7 +360,7 @@ def plot_curves(history, title, ylabel, savepath=None):
     plt.show()
 
 
-def plot_confusion(y_true, y_pred, labels, title="Confusion matrix"):
+def plot_confusion(y_true, y_pred, labels, title="Confusion matrix", savepath=None):
     cm = confusion_matrix(y_true, y_pred, labels=list(range(len(labels))))
     plt.figure(figsize=(5, 4))
     plt.imshow(cm, interpolation="nearest")
@@ -334,10 +372,14 @@ def plot_confusion(y_true, y_pred, labels, title="Confusion matrix"):
     plt.ylabel("True label")
     plt.xlabel("Predicted label")
     plt.tight_layout()
+    if savepath is not None:
+        plt.savefig(savepath, dpi=150)
+        base, _ = os.path.splitext(savepath)
+        np.savetxt(base + ".csv", cm, fmt="%d", delimiter=",")
     plt.show()
 
 
-def plot_multiclass_roc(y_true, y_prob, labels, title="ROC"):
+def plot_multiclass_roc(y_true, y_prob, labels, title="ROC", savepath=None):
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
     n_classes = len(labels)
@@ -376,6 +418,14 @@ def plot_multiclass_roc(y_true, y_prob, labels, title="ROC"):
     plt.legend(loc="lower right", fontsize=9)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
+    if savepath is not None:
+        plt.savefig(savepath, dpi=150)
+        # save AUC table
+        rows = [{"class": labels[i], "AUC": roc_auc[i]} for i in range(n_classes)]
+        rows += [{"class": "micro", "AUC": roc_auc["micro"]},
+                 {"class": "macro", "AUC": roc_auc["macro"]}]
+        base, _ = os.path.splitext(savepath)
+        pd.DataFrame(rows).to_csv(base + "_auc.csv", index=False)
     plt.show()
 
 
@@ -391,7 +441,7 @@ def main():
     # 2) Patient-wise split 70 / 15 / 15
     train_idx, val_idx, test_idx = patientwise_split(base_ds)
 
-    # 3) Print stats for each split
+    # 3) Print & save stats for each split
     subset_stats(base_ds, train_idx, "Train")
     subset_stats(base_ds, val_idx, "Val")
     subset_stats(base_ds, test_idx, "Test")
@@ -409,7 +459,12 @@ def main():
     model = SimpleCRNN().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 
-    print(f"\nTrainable parameters: {count_parameters(model):,}")
+    n_params = count_parameters(model)
+    print(f"\nTrainable parameters: {n_params:,}")
+
+    # save model info
+    with open(os.path.join(RESULT_DIR, "model_info.txt"), "w") as f:
+        f.write(f"Trainable parameters: {n_params}\n")
 
     # 6) Training loop
     acc_hist = {"train": [], "val": [], "test": []}
@@ -434,19 +489,54 @@ def main():
         print(f"  Val:   loss={val_loss:.3f} acc={val_acc:.3f} micro-F1={val_f1:.3f}")
         print(f"  Test:  loss={te_loss:.3f} acc={te_acc:.3f} micro-F1={te_f1:.3f}")
 
-    # 7) Final evaluation on test for plots
+    # 7) Save per-epoch metrics to CSV
+    metrics_df = pd.DataFrame({
+        "epoch": np.arange(1, EPOCHS + 1),
+        "train_acc": acc_hist["train"],
+        "val_acc": acc_hist["val"],
+        "test_acc": acc_hist["test"],
+        "train_micro_f1": f1_hist["train"],
+        "val_micro_f1": f1_hist["val"],
+        "test_micro_f1": f1_hist["test"],
+    })
+    metrics_df.to_csv(os.path.join(RESULT_DIR, "metrics_per_epoch.csv"), index=False)
+
+    # 8) Final evaluation on test for plots
     _, _, _, y_test, y_pred_test, y_prob_test = run_epoch(model, test_dl, optimizer=None)
 
     # Accuracy curves
-    plot_curves(acc_hist, "Accuracy vs Epoch", "Accuracy")
+    plot_curves(
+        acc_hist,
+        "Accuracy vs Epoch",
+        "Accuracy",
+        savepath=os.path.join(RESULT_DIR, "accuracy_curves.png")
+    )
+
     # micro-F1 curves
-    plot_curves(f1_hist, "Micro-F1 vs Epoch", "Micro-F1")
+    plot_curves(
+        f1_hist,
+        "Micro-F1 vs Epoch",
+        "Micro-F1",
+        savepath=os.path.join(RESULT_DIR, "micro_f1_curves.png")
+    )
 
     # Confusion matrix
-    plot_confusion(y_test, y_pred_test, LABELS, title="Test confusion matrix")
+    plot_confusion(
+        y_test,
+        y_pred_test,
+        LABELS,
+        title="Test confusion matrix",
+        savepath=os.path.join(RESULT_DIR, "confusion_matrix_test.png")
+    )
 
     # ROC + AUC
-    plot_multiclass_roc(y_test, y_prob_test, LABELS, title="Test ROC curves")
+    plot_multiclass_roc(
+        y_test,
+        y_prob_test,
+        LABELS,
+        title="Test ROC curves",
+        savepath=os.path.join(RESULT_DIR, "roc_test.png")
+    )
 
 
 if __name__ == "__main__":
